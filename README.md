@@ -17,10 +17,10 @@ NVIDIA BlueField-2 and ConnectX-7 offer two IPSec offload options for
 securing traffic between VMs on different hosts. The more preferred and
 performant option is of course [[Packet Offload or otherwise known as
 Full
-Offload.]{.underline}](https://docs.nvidia.com/networking/display/mlnxofedv24010331/ipsec+full+offload)
+Offload.]](https://docs.nvidia.com/networking/display/mlnxofedv24010331/ipsec+full+offload)
 
 In this document though, I discuss [[crypto
-offload]{.underline}](https://docs.nvidia.com/networking/display/mlnxofedv24010331/ipsec+crypto+offload),
+offload]](https://docs.nvidia.com/networking/display/mlnxofedv24010331/ipsec+crypto+offload),
 which enables the user to offload IPsec crypto encryption and decryption
 operations to the NIC hardware. This is a much less performant option
 than packet offload. However, this may be the only choice in some
