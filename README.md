@@ -104,6 +104,13 @@ the dependent packages.
 
 Connect to the VM's console as shown above to complete the installation.
 
+NOTE: Depending upon the version of virt-install, it may not support
+*rx_queue_size* option for **--network**.  If this gives an error, remove it
+and add it later directly to the XML as described in the tuning section below.
+
+You may also want to compare the XML file of your created VM against the
+vlinux1.xml file in this repository.
+
 # VM-VM Tuning
 
 The following describes some techniques for how I tuned the VMs

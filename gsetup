@@ -1,0 +1,205 @@
+# Set up geneve + IPSec offload, initialize and create 
+# network interfaces as required. 
+
+# CX7 ports 
+PF0=enp23s0f0np0
+PF1=enp23s0f1np1
+
+# Bond
+do_bond=1       # -p to disable on command line  
+BOND=bond0
+BMODE=1         # mode=1 is active-passive, 4=LACP
+interval=100    # bond link check interval of 100 milliseconds
+
+# Geneve
+do_geneve=1     # true always
+GENEVE=geneve0
+G_PORT=6081     # Geneve typically uses UDP port 6081.
+G_VNI=100
+
+# IPSec
+do_ipsec=1      # true
+crypto=1
+SPI1=300001
+SPI2=400001
+REQ1=10001
+REQ2=20001
+# Use same ciphers for both in and out traffic 
+# (Should be OK)
+AEAD_ALGO="rfc4106(gcm(aes))"
+KEY=0x20f01f80a26f633d85617465686c32552c92c42f
+ICV_LEN=128
+IPSEC_MODE=transport
+CIDR=32         # just encrypt a single IP
+
+# Common options
+OUTER=192.168.1
+INNER=192.170.1
+PF=$BOND        # PF device - bond or CX7 port?
+server=
+MTU=
+devices=$PF0
+
+
+usage()
+{
+    echo "Usage: gsetup [-p] [-k|N] [-H] [-m <mtu>] -s|-c"
+    echo "   -p: Use PF instead of bond"
+    echo "   -k: Kernel encryption (no crypto offload)"
+    echo "   -n: No IPSec"
+    echo "   -m <mtu>: Set MTU for devices"
+    echo "   -s : Server side (for iperf3)"
+    echo "   -c : Client side (for iperf3)"
+    exit 1
+}
+
+init_ips()
+{
+
+    # Set 4th octet based on whether server or client
+    if [ $server = 1 ]; then
+        local=1
+        remote=2
+    else
+        local=2
+        remote=1
+    fi
+
+    LOCAL_IP=$OUTER.$local
+    REMOTE_IP=$OUTER.$remote
+
+    if [ $do_geneve = 1 ]; then
+        # Geneve encapsulation is based on the host IPs
+        INNER_LOCAL_IP=$LOCAL_IP
+        INNER_REMOTE_IP=$REMOTE_IP
+    else
+        INNER_LOCAL_IP=$INNER.$local
+        INNER_REMOTE_IP=$INNER.$remote
+    fi
+}
+
+init_bond()
+{
+    sudo modprobe bonding mode=$BMODE miimon=$interval
+
+    # Create and set up bond0 interface
+    sudo ip link add $BOND type bond
+    sudo ip link set $BOND up
+
+    # Device can not be enslaved while up
+    sudo ip link set $PF0 down
+    sudo ip link set $PF0 master $BOND
+    sudo ip link set $PF0 up
+
+    sudo ip link set $PF1 down
+    sudo ip link set $PF1 master $BOND
+
+    devices="$devices $BOND"
+
+    sleep .25
+}
+
+init_geneve()
+{
+    sudo ifconfig $PF $LOCAL_IP/24 up
+    sudo ip link add $GENEVE type geneve id $G_VNI remote $REMOTE_IP dstport $G_PORT
+    sudo ip link set $GENEVE up
+
+    devices="$devices $GENEVE"
+
+    sleep .25
+}
+
+add_xfrm_ipsec()
+{
+    ipchan_src=$1
+    ipchan_dst=$2
+    sel_src=$3
+    sel_dst=$4
+    spi=$5
+    req=$6
+    dir=$7
+
+    if [ $crypto = 1 ]; then
+        offload_state="offload dev $PF dir $dir"
+        offload_policy=
+    else
+        offload_state=
+        offload_policy=
+    fi
+
+    sudo ip xfrm state add src $ipchan_src dst $ipchan_dst proto esp spi $spi aead "$AEAD_ALGO" $KEY $ICV_LEN mode $IPSEC_MODE reqid $req $offload_state
+    sudo ip xfrm policy add src $sel_src/$CIDR dst $sel_dst/$CIDR $offload_policy dir $dir tmpl src $ipchan_src dst $ipchan_dst proto esp reqid $req mode $IPSEC_MODE
+
+    # Add fwd policy for transport mode 
+    if [ $dir = in -a $IPSEC_MODE = transport ]; then 
+        sudo ip xfrm policy add src $sel_src/$CIDR dst $sel_dst/$CIDR $offload_policy dir fwd tmpl src $ipchan_src dst $ipchan_dst proto esp reqid $req mode $IPSEC_MODE
+    fi
+}
+
+init_ipsec()
+{
+    if [ $server = 1 ]; then
+       SPI_OUT=$SPI1
+       SPI_IN=$SPI2
+    else
+       SPI_OUT=$SPI2
+       SPI_IN=$SPI1
+    fi
+
+    # OK for req ids to be the same on both systems
+    REQ_OUT=$REQ1
+    REQ_IN=$REQ2
+
+    sudo ip xfrm state flush
+    sudo ip xfrm policy flush
+
+    # One for each direction
+    add_xfrm_ipsec $LOCAL_IP $REMOTE_IP $INNER_LOCAL_IP $INNER_REMOTE_IP $SPI_OUT $REQ_OUT out
+    add_xfrm_ipsec $REMOTE_IP $LOCAL_IP $INNER_REMOTE_IP $INNER_LOCAL_IP $SPI_IN $REQ_IN in
+
+    sleep .25
+}
+
+set_mtu()
+{
+    for d in devices; do
+        sudo ip link set dev $d mtu 3300
+    done
+}
+        
+# MAIN
+while [ -n "$1" ]; do
+    if [ $1 = -p ]; then
+       do_bond=0
+       # Choose port 0
+       PF=$PF0
+    elif [ $1 = -n ]; then
+        crypto=0
+    elif [ $1 = -m ]; then
+        [ -z "$2" ] && usage
+        MTU=$2
+        shift
+    elif [ $1 = -c ]; then
+        server=0
+    elif [ $1 = -s ]; then
+        server=1
+    else
+        usage
+    fi
+    shift
+done
+
+if [ -z "$server" ]; then
+    usage
+fi
+
+init_ips
+
+[ $do_bond = 1 ] && init_bond
+
+[ $do_geneve = 1 ] && init_geneve
+
+[ $do_ipsec = 1 ] && init_ipsec
+
+[ -n "$MTU" ] && set_mtu

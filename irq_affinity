@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Script to manage IRQ affinity
+
+usage()
+{
+    echo " Usage: ./irq_affinity <irq>"
+    echo "             - display CPU affinity for this IRQ"
+    echo "        ./irq_affinity -s <irq> <cpu>"
+    echo "             - assign Linux <irq> affinity to a single <cpu>"
+    exit 1
+}
+
+# Function to convert a hex mask into CPU numbers
+mask_to_cpus()
+{
+    mask=$1
+    cpus=()
+    cpu=0
+
+    while [ $mask -ne 0 ]; do
+        if (( mask & 1 )); then
+            cpus+=($cpu)
+        fi
+        mask=$(( mask >> 1 ))
+        cpu=$(( cpu + 1 ))
+    done
+
+    echo "${cpus[@]}"
+}
+
+irq_to_cpus()
+{
+    irq=$1
+    hex_mask=$(cat /proc/irq/$IRQ/smp_affinity)
+    mask=$(printf "%d\n" $hex_mask)
+    mask_to_cpus $mask
+}
+
+[ -z "$1" ] && usage
+
+assign=0
+
+# Quick command line check
+if [ "$1" = "-s" ]; then
+   [ -z "$3" ] && usage
+    assign=1
+    IRQ=$2
+    CPU=$3
+else
+    IRQ=$1
+fi
+    
+if [ ! -d /proc/irq/$IRQ/mlx5_* ]; then
+    echo "Warning: IRQ $IRQ not associated with an MLX5 device."
+    exit 1
+fi
+
+cpus=$(irq_to_cpus $IRQ)
+
+if [ $assign = 1 ]; then
+
+    # Bind IRQ to given CPU
+    new_mask=$((1 << CPU))
+    new_hex_mask=$(printf "%x" $new_mask)
+
+    sudo sh -c "echo $new_hex_mask > /proc/irq/$IRQ/smp_affinity"
+    echo "IRQ $IRQ was bound to $cpus, now bound $CPU"
+else
+    echo "IRQ $IRQ is bound to $cpus"
+fi

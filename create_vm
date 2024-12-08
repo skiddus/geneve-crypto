@@ -1,0 +1,110 @@
+## Set Up VM 
+#.    VM networking
+#       - We create two interfaces - a control path and a data path
+#           - Control path is virtio connected to virbr0 bridge on the host
+#           - Data path is macvtap over the PF
+#       - The set up on the host (PF, Geneve, IPSec)  is not part of this script.
+
+install=0
+
+VCPUS=6 
+CPUSET=20,22,24,26,28,30
+MEMORY=16384      # 16G
+
+NUMA=0
+
+# ISO image
+ISO_IMAGE=ubuntu-24.04.1-live-server-amd64.iso
+WGET_ISO=https://releases.ubuntu.com/noble/$ISO_IMAGE
+OS_VARIANT=ubuntu24.04
+
+if [ "$1" = "-i" ]; then
+    install=1
+    shift
+fi
+
+if [ -z "$1" ]; then
+    echo "Usage: init_vm1 [-i] <vm_suffix>"
+    exit 
+fi
+
+vm=$1
+HOST=$(hostname)
+NAME=vlinux${vm}
+
+get_iso()
+{
+    # 4. Download the ISO image
+    mkdir -p ~/tmp/iso
+    cd ~/tmp/iso
+    wget $WGET_ISO
+    cd -
+}
+
+setup_libvirtd()
+{
+	# 1. Install KVM and other packages
+	#      - maybe bridge-utils not needed 
+	sudo apt install -y qemu-system-x86 libvirt-daemon-system libvirt-clients bridge-utils virt-manager
+	
+	# 2. By default, Ubuntu should add the non-root local user (Ubuntu) to 
+	#    libvirt automatically when the above packages (qemu, libvirt) are
+	#    installed successfully.
+	#       - Check if that is so using the id command. However, id command only
+	#         shows first 10 groups, so we also check in /etc/group 
+	
+	if ! id | grep -q libvirt && ! grep -q "libvirt.*$USER" /etc/group; then
+	    echo "Current user $USER was not added to libvirt group. Adding directly!"
+	    sudo usermod -aG libvirt $USER
+	fi
+	
+	#  3. By default, Ubuntu should have enabled the libvirtd daemon automatically.
+	#       - Check if not enabled, and also start it if not started.
+	
+	if systemctl is-enabled --quiet libvirtd; then
+	    echo "libvirtd is enabled to start on boot!"
+	else
+	    echo "libvirtd is not enabled to start on boot! Enabling manually!"
+	    sudo systemctl enable libvirtd
+	fi
+	
+	if ! systemctl is-active --quiet libvirtd; then
+	    echo "libvirtd not active. Activating manually."
+	    sudo systemctl start libvirtd
+	fi
+
+    # Download the ISO image
+    get_iso
+}
+
+install_vm()
+{
+    sudo virt-install       \
+	    --name $NAME      \
+	    --memory $MEMORY       \
+	    --vcpus $VCPUS,cpuset=$CPUSET   \
+        --numatune $NUMA \
+	    --location ~/tmp/iso/$ISO_IMAGE,kernel=casper/vmlinuz,initrd=casper/initrd  \
+	    --os-variant ubuntu24.04     \
+	    --disk path=/var/lib/libvirt/images/$NAME.qcow2,size=32,bus=virtio,format=qcow2 \
+        --network bridge=virbr0,model=virtio \
+#        --network bridge=geneve0,model=virtio,rx_queue_size=1024 \
+        --network bridge=geneve0,model=virtio \
+        --graphics none \
+	    --noautoconsole \
+	    --console pty,target_type=serial \
+	    --virt-type=kvm \
+        --extra-args="console=ttyS0,115200" 
+                # --network: First one for out-of-band
+                #            Second one our vNIC for testing
+                # --extra-args: kernel boot arguments allows us to interact with installer
+                #               through the console.
+}
+
+# MAIN
+
+# Install pre-reqs
+[ $install = 1 ] && setup_libvirtd
+
+# Install VM
+install_vm
