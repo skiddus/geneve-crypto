@@ -111,6 +111,12 @@ and add it later directly to the XML as described in the tuning section below.
 You may also want to compare the XML file of your created VM against the
 vlinux1.xml file in this repository.
 
+Tip: After installation, rebooting the VM might fail with a:
+**[FAILED] Failed unmounting cdrom.mount - /cdrom.** error.
+If so, just Ctrl-C, run *virsh edit \<domain\>* and remove the CDROM device
+from the XML definition. Then simply run *virsh start \<domain\>* to boot it
+as normal.
+
 # VM-VM Tuning
 
 The following describes some techniques for how I tuned the VMs

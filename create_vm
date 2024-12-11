@@ -88,8 +88,7 @@ install_vm()
 	    --os-variant ubuntu24.04     \
 	    --disk path=/var/lib/libvirt/images/$NAME.qcow2,size=32,bus=virtio,format=qcow2 \
         --network bridge=virbr0,model=virtio \
-#        --network bridge=geneve0,model=virtio,rx_queue_size=1024 \
-        --network bridge=geneve0,model=virtio \
+        --network type=direct,source=geneve0,source_mode=vepa,model=virtio,driver.name=vhost,driver.queues=4 \
         --graphics none \
 	    --noautoconsole \
 	    --console pty,target_type=serial \
